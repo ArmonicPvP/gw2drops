@@ -24,8 +24,8 @@ gw2drops runs as an [arcdps](https://www.deltaconnected.com/arcdps/) extension, 
 
 ### Standalone (no arcdps or Nexus, e.g. Linux)
 
-1. Download `gw2drops_collector.dll` from the
-   [latest release](https://github.com/ArmonicPvP/gw2drops/releases/latest) and rename it to `d3d11.dll`.
+1. Download `d3d11.dll` from the
+   [latest release](https://github.com/ArmonicPvP/gw2drops/releases/latest).
 2. Put `d3d11.dll` in your Guild Wars 2 folder. If arcdps is already there, use the arcdps install instead.
 3. Linux only: in Steam, set the launch option `WINEDLLOVERRIDES="d3d11=n,b" %command%`.
    In Lutris, add the DLL override `d3d11` = `n,b`.
