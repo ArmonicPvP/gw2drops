@@ -3,13 +3,19 @@ name: Release announcement
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to announce again (for example v0.8.2)
+        required: true
 
-permissions: {}
+permissions:
+  contents: read
 
 jobs:
   discord:
     name: Announce release on Discord
-    if: "!github.event.release.draft"
+    if: github.event_name == 'workflow_dispatch' || !github.event.release.draft
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -17,13 +23,23 @@ jobs:
         shell: bash
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          # The Discord role pinged above the announcement.
+          DISCORD_ROLE_ID: "1574573530417205298"
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.inputs.tag }}
         run: |
           python3 - <<'PY'
           import json
           import os
+          import re
+          import subprocess
           from urllib.error import HTTPError, URLError
           from urllib.parse import urlsplit
           from urllib.request import Request, urlopen
+
+          def discord_markdown(notes):
+              # Discord has no sixth-level heading; its small "subtext" line is "-#".
+              return re.sub(r"(?m)^######[ \t]+", "-# ", notes)
 
           def limit_notes(notes):
               encoded = notes.encode("utf-16-le")
@@ -39,18 +55,36 @@ jobs:
               print("::notice::DISCORD_WEBHOOK_URL is unset. Skipping the announcement.")
               raise SystemExit(0)
 
-          with open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8") as event:
-              release = json.load(event)["release"]
+          if os.environ.get("RELEASE_TAG"):
+              try:
+                  result = subprocess.run(
+                      [
+                          "gh", "release", "view", os.environ["RELEASE_TAG"], "--repo",
+                          os.environ["GITHUB_REPOSITORY"], "--json", "tagName,body,url,isDraft",
+                      ],
+                      check=True, capture_output=True, encoding="utf-8", timeout=20,
+                  )
+              except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                  raise SystemExit("Could not read the GitHub release.") from None
+              info = json.loads(result.stdout)
+              if info["isDraft"]:
+                  raise SystemExit("That release is a draft; publish it first.")
+              release = {"tag_name": info["tagName"], "body": info["body"], "html_url": info["url"]}
+          else:
+              with open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8") as event:
+                  release = json.load(event)["release"]
+
           notes = (release.get("body") or "").strip() or "See the release on GitHub."
-          title = f"GW2Drops - {release['tag_name']}"
+          role = os.environ["DISCORD_ROLE_ID"]
           payload = {
               "username": "GW2Drops",
               "avatar_url": "https://raw.githubusercontent.com/ArmonicPvP/gw2drops/main/assets/gw2drops-logo.png",
-              "allowed_mentions": {"parse": []},
+              "content": f"<@&{role}>",
+              "allowed_mentions": {"parse": [], "roles": [role]},
               "embeds": [{
-                  "title": title,
+                  "title": f"GW2Drops - {release['tag_name']}",
                   "url": release["html_url"],
-                  "description": limit_notes(notes),
+                  "description": limit_notes(discord_markdown(notes)),
                   "color": 0x1976D2,
               }],
           }
@@ -65,10 +99,11 @@ jobs:
               method="POST",
           )
           try:
-              with urlopen(request, timeout=20):
-                  pass
+              with urlopen(request, timeout=20) as response:
+                  message = json.load(response)
           except HTTPError as error:
               raise SystemExit(f"Discord returned HTTP {error.code}.") from None
           except (URLError, TimeoutError):
               raise SystemExit("Could not reach the Discord webhook.") from None
+          print(f"Posted Discord message {message.get('id')} for {release['tag_name']}.")
           PY
