@@ -1,0 +1,74 @@
+name: Release announcement
+
+on:
+  release:
+    types: [published]
+
+permissions: {}
+
+jobs:
+  discord:
+    name: Announce release on Discord
+    if: "!github.event.release.draft"
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Send release notes to Discord
+        shell: bash
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from urllib.error import HTTPError, URLError
+          from urllib.parse import urlsplit
+          from urllib.request import Request, urlopen
+
+          def limit_notes(notes):
+              encoded = notes.encode("utf-16-le")
+              if len(encoded) <= 2 * 4096:
+                  return notes
+              suffix = "\n\n*...and more*"
+              return encoded[:2 * (4096 - len(suffix))].decode(
+                  "utf-16-le", errors="ignore"
+              ) + suffix
+
+          webhook = os.environ.get("DISCORD_WEBHOOK_URL")
+          if not webhook:
+              print("::notice::DISCORD_WEBHOOK_URL is unset. Skipping the announcement.")
+              raise SystemExit(0)
+
+          with open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8") as event:
+              release = json.load(event)["release"]
+          notes = (release.get("body") or "").strip() or "See the release on GitHub."
+          title = f"GW2Drops - {release['tag_name']}"
+          payload = {
+              "username": "GW2Drops",
+              "avatar_url": "https://raw.githubusercontent.com/ArmonicPvP/gw2drops/main/assets/gw2drops-logo.png",
+              "allowed_mentions": {"parse": []},
+              "embeds": [{
+                  "title": title,
+                  "url": release["html_url"],
+                  "description": limit_notes(notes),
+                  "color": 0x1976D2,
+              }],
+          }
+
+          if urlsplit(webhook).scheme != "https":
+              raise SystemExit("The Discord webhook URL must use HTTPS.")
+          separator = "&" if urlsplit(webhook).query else "?"
+          request = Request(
+              f"{webhook}{separator}wait=true",
+              data=json.dumps(payload).encode("utf-8"),
+              headers={"Content-Type": "application/json", "User-Agent": "gw2drops-release/1"},
+              method="POST",
+          )
+          try:
+              with urlopen(request, timeout=20):
+                  pass
+          except HTTPError as error:
+              raise SystemExit(f"Discord returned HTTP {error.code}.") from None
+          except (URLError, TimeoutError):
+              raise SystemExit("Could not reach the Discord webhook.") from None
+          PY
