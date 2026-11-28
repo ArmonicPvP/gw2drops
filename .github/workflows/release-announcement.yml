@@ -52,7 +52,6 @@ jobs:
                   "url": release["html_url"],
                   "description": limit_notes(notes),
                   "color": 0x1976D2,
-                  "footer": {"text": "gw2drops"},
               }],
           }
 
